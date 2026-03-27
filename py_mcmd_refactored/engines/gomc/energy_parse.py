@@ -59,6 +59,7 @@ import logging
 import pandas as pd
 
 from py_mcmd_refactored.config.models import SimulationConfig
+from utils.units import K_TO_KCAL_PER_MOL
 
 log = logging.getLogger(__name__)
 
@@ -177,8 +178,11 @@ def get_gomc_energy_data(
     rows_converted: List[List[object]] = []
 
     step_offset = getattr(cfg, "current_step", 0)
-    scale = getattr(cfg, "K_to_kcal_mol", 1.0)
-
+    # Regression test: if cfg.K_to_kcal_mol is missing, the parser must use
+    # utils.units.K_TO_KCAL_PER_MOL instead of falling back to 1.0.
+    
+    # scal  e = getattr(cfg, "K_to_kcal_mol", 1.0)
+    scale = getattr(cfg, "K_to_kcal_mol", K_TO_KCAL_PER_MOL)
     for row in _iter_rows_with_prefix(all_lines, energy_prefix):
         row = _normalize_energy_tokens(row, had_dup_etitle)
         rows_converted.append(

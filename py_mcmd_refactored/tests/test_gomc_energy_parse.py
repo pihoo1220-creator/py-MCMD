@@ -124,3 +124,39 @@ def test_extra_tokens_are_ignored_beyond_headers():
     # scaled
     assert df.loc[0, "ELECT"] == pytest.approx(1.0)
     assert df.loc[0, "POTENTIAL"] == pytest.approx(2.0)
+
+from types import SimpleNamespace
+import pytest
+
+from py_mcmd_refactored.engines.gomc.energy_parse import get_gomc_energy_data
+from utils.units import K_TO_KCAL_PER_MOL
+
+
+def test_gomc_energy_parser_uses_default_conversion_when_cfg_missing():
+    lines = [
+        "ETITLE: ETITLE: STEP ELECT POTENTIAL VDW\n",
+        "ENER_0: ENER_0: 0 1.0 2.0 3.0\n",
+    ]
+    cfg = SimpleNamespace(current_step=100)  # no K_to_kcal_mol on purpose
+
+    df = get_gomc_energy_data(cfg, lines, box_number=0)
+
+    assert df.loc[0, "STEP"] == 100
+    assert df.loc[0, "ELECT"] == pytest.approx(1.0 * K_TO_KCAL_PER_MOL)
+    assert df.loc[0, "POTENTIAL"] == pytest.approx(2.0 * K_TO_KCAL_PER_MOL)
+    assert df.loc[0, "VDW"] == pytest.approx(3.0 * K_TO_KCAL_PER_MOL)
+
+
+def test_gomc_energy_parser_prefers_cfg_conversion_when_present():
+    lines = [
+        "ETITLE: ETITLE: STEP ELECT POTENTIAL VDW\n",
+        "ENER_0: ENER_0: 0 1.0 2.0 3.0\n",
+    ]
+    cfg = SimpleNamespace(current_step=0, K_to_kcal_mol=0.5)
+
+    df = get_gomc_energy_data(cfg, lines, box_number=0)
+
+    assert df.loc[0, "STEP"] == 0
+    assert df.loc[0, "ELECT"] == pytest.approx(0.5)
+    assert df.loc[0, "POTENTIAL"] == pytest.approx(1.0)
+    assert df.loc[0, "VDW"] == pytest.approx(1.5)
