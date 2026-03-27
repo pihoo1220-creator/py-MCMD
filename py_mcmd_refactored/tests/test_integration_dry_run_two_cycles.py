@@ -128,7 +128,7 @@ def test_integration_dry_run_two_cycles(tmp_path: Path, monkeypatch):
     import engines.gomc_engine as ge
     from pathlib import Path
 
-    def fake_write_gomc_conf_file(cfg, io, run_no, sim, starts):
+    def fake_write_gomc_conf_file(cfg, io, run_no, sim, starts, **kwargs):
         root = Path(io.path_gomc_runs)
         root.mkdir(parents=True, exist_ok=True)
         run_dir = root / f"run_{int(run_no):02d}"
@@ -152,7 +152,12 @@ def test_integration_dry_run_two_cycles(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(ne, "get_namd_energy_data", fake_get_namd_energy_data)
 
-    monkeypatch.setattr(ge, "get_gomc_energy_data", lambda lines, box: object())
+    # monkeypatch.setattr(ge, "get_gomc_energy_data", lambda lines, box: object())
+    monkeypatch.setattr(
+        ge,
+        "get_gomc_energy_data",
+        lambda cfg, lines, box_number: object(),
+    )
     monkeypatch.setattr(
         ge,
         "get_gomc_energy_data_kcal_per_mol",

@@ -176,8 +176,15 @@ def test_fresh_npt_writes_config(tmp_path: Path, caplog: pytest.LogCaptureFixtur
     conf = (out_dir / "in.conf").read_text()
 
     # parameters present
-    assert "Parameters \t params/par1.prm" in conf
-    assert "Parameters \t params/par2.prm" in conf
+    # assert "Parameters \t params/par1.prm" in conf
+    # assert "Parameters \t params/par2.prm" in conf
+    import os
+
+    expected_par1 = os.path.relpath(proj / "params" / "par1.prm", out_dir).replace(os.sep, "/")
+    expected_par2 = os.path.relpath(proj / "params" / "par2.prm", out_dir).replace(os.sep, "/")
+
+    assert f"Parameters \t {expected_par1}" in conf
+    assert f"Parameters \t {expected_par2}" in conf
 
     # box0 restarts from NAMD
     assert "coor_box_0_file" not in conf
@@ -337,8 +344,85 @@ def test_gcmc_restart_with_chempot_and_prev_gomc(tmp_path: Path):
     assert "44.0" in conf and "54.0" in conf and "64.0" in conf
 
     # Restart checkpoint points at previous dir
-    assert f"true GOMC/0000000003/Output_data_restart.chk" in conf
+    # assert f"true GOMC/0000000003/Output_data_restart.chk" in conf
+    import os
+
+    # Restart checkpoint points at previous dir, relative to the new GOMC run dir
+    expected_chk = os.path.relpath(
+        prev_gomc / "Output_data_restart.chk",
+        out_dir,
+    ).replace(os.sep, "/")
+
+    assert f"true {expected_chk}" in conf
 
     # ChemPot lines present
     assert "ChemPot \t WAT \t -6.5" in conf
     assert "ChemPot \t Na+ \t -5.1" in conf
+
+
+def test_gomc_writer_rewrites_relative_parameter_paths_to_run_dir(tmp_path):
+    from py_mcmd_refactored.engines.gomc.gomc_writer import _build_parameters_block
+    proj = tmp_path / "proj"
+    proj.mkdir()
+
+    gomc_run_dir = proj / "GOMC" / "0000000001"
+    gomc_run_dir.mkdir(parents=True)
+
+    ff = proj / "required_data" / "input" / "OPC_FF_GOMC.inp"
+    ff.parent.mkdir(parents=True)
+    ff.write_text("* ff\n")
+
+    block = _build_parameters_block(
+        [Path("required_data/input/OPC_FF_GOMC.inp")],
+        relative_to=gomc_run_dir,
+        project_root=proj,
+    )
+    expected = os.path.relpath(ff, gomc_run_dir).replace(os.sep, "/")
+
+    assert block == f"Parameters \t {expected}\n"
+    assert block.strip().split()[-1] == expected
+    assert expected.startswith("../")
+
+def test_restart_missing_checkpoint_is_allowed_in_dry_run(tmp_path: Path):
+    proj = tmp_path / "proj"
+    tpl = proj / "templates" / "gomc.tpl"
+    _write_template(tpl, include_box1_tokens=False, include_bin_lines=False, include_gcmc_block=False)
+
+    namd0 = proj / "NAMD" / "0000000002_a"
+    namd0.mkdir(parents=True)
+    (namd0 / "namdOut.restart.xsc").write_text(_xsc(10.0, 20.0, 30.0))
+    (namd0 / "namdOut.restart.coor").write_text("c")
+    (namd0 / "namdOut.restart.vel").write_text("v")
+
+    prev_gomc = proj / "GOMC" / "0000000001"
+    prev_gomc.mkdir(parents=True)
+    (prev_gomc / "Output_data_BOX_0_restart.pdb").write_text(_pdb_cryst1(10, 20, 30))
+    (prev_gomc / "Output_data_BOX_0_restart.psf").write_text("psf")
+    # intentionally do NOT create Output_data_restart.chk
+
+    inputs = proj / "inputs"
+    inputs.mkdir()
+    (inputs / "b0.pdb").write_text(_pdb_cryst1(1, 2, 3))
+    (inputs / "b1.pdb").write_text(_pdb_cryst1(4, 5, 6))
+    (inputs / "b0.psf").write_text("psf0")
+    (inputs / "b1.psf").write_text("psf1")
+
+    cfg = _make_cfg(simulation_type="NPT")
+    io = GOMCIOPaths(
+        python_file_directory=proj,
+        path_gomc_runs=Path("GOMC"),
+        path_gomc_template=tpl.relative_to(proj),
+        namd_box_0_dir=namd0,
+        namd_box_1_dir=None,
+        previous_gomc_dir=prev_gomc,
+    )
+    sim = GOMCSimParams(20, 20, 20, 2, 250.0, 1.0)
+    starts = GOMCStartFiles(
+        Path("inputs/b0.pdb"), Path("inputs/b1.pdb"),
+        Path("inputs/b0.psf"), Path("inputs/b1.psf"),
+    )
+
+    out_dir = write_gomc_conf_file(cfg, io, run_no=3, sim=sim, starts=starts, dry_run=True)
+    conf = (out_dir / "in.conf").read_text()
+
+    assert "false Output_data_restart.chk" in conf

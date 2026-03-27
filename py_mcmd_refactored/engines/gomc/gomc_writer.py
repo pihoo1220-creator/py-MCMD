@@ -58,16 +58,40 @@ def _rel(p: Path, base: Path) -> str:
     return os.path.relpath(str(p), start=str(base)).replace("\\", "/")
 
 
-def _build_parameters_block(params_files: Iterable[Path], relative_to: Path) -> str:
+# def _build_parameters_block(params_files: Iterable[Path], relative_to: Path) -> str:
+#     lines = []
+#     for p in params_files:
+#         p = Path(p)
+#         if p.is_absolute():
+#             rel = _rel(p, relative_to)
+#         else:
+#             # keep author-provided relative path as-is
+#             rel = p.as_posix()
+#         lines.append(f"Parameters \t {rel}\n")
+#     return "".join(lines)
+
+def _build_parameters_block(
+    params_files: Iterable[Path],
+    relative_to: Path,
+    project_root: Path,
+) -> str:
+    """
+    Legacy-compatible behavior:
+    every parameter file path written into in.conf must be relative
+    to the GOMC run directory, not left as the original JSON string.
+    """
     lines = []
     for p in params_files:
         p = Path(p)
-        if p.is_absolute():
-            rel = _rel(p, relative_to)
-        else:
-            # keep author-provided relative path as-is
-            rel = p.as_posix()
+
+        # Legacy semantics:
+        # - absolute input path -> keep absolute target, then relativize to run dir
+        # - relative input path -> interpret relative to project root, then relativize
+        full_path = p if p.is_absolute() else (project_root / p)
+
+        rel = _rel(full_path.resolve(), relative_to.resolve())
         lines.append(f"Parameters \t {rel}\n")
+
     return "".join(lines)
 
 
@@ -149,6 +173,7 @@ def write_gomc_conf_file(
     run_no: int,
     sim: GOMCSimParams,
     starts: GOMCStartFiles,
+    dry_run: bool = False,
 ) -> Path:
     python_dir = Path(io.python_file_directory)
     run_id = format_cycle_id(run_no, width=10)
@@ -159,7 +184,12 @@ def write_gomc_conf_file(
     template = _load_text(tpl_path)
 
     params_files = getattr(cfg, "starting_ff_file_list_gomc", []) or []
-    params_block = _build_parameters_block(params_files, relative_to=gomc_newdir)
+    # params_block = _build_parameters_block(params_files, relative_to=gomc_newdir)
+    params_block = _build_parameters_block(
+        params_files,
+        relative_to=gomc_newdir,
+        project_root=python_dir,
+    )
     out = template.replace("all_parameter_files", params_block)
 
     # Box 0: always from NAMD previous step
@@ -270,19 +300,58 @@ def write_gomc_conf_file(
         else:
             log.warning("Warning: There is in error in the chemical potential settings for GCMC simulation.")
 
+    # if io.previous_gomc_dir is not None:
+    #     # Tests expect checkpoint path relative to project root (python_file_directory),
+    #     # e.g., 'GOMC/0000000003/Output_data_restart.chk'
+    #     prev_gomc_rel_chk = _rel(io.previous_gomc_dir, io.python_file_directory)
+    #     out = out.replace(
+    #         "Restart_Checkpoint_file",
+    #         f"true {prev_gomc_rel_chk}/Output_data_restart.chk",
+    #     )
+    # else:
+    #     if "Restart_Checkpoint_file" in out:
+    #         out = out.replace("Restart_Checkpoint_file", f"false {'Output_data_restart.chk'}")
+
     if io.previous_gomc_dir is not None:
-        # Tests expect checkpoint path relative to project root (python_file_directory),
-        # e.g., 'GOMC/0000000003/Output_data_restart.chk'
-        prev_gomc_rel_chk = _rel(io.previous_gomc_dir, io.python_file_directory)
-        out = out.replace(
-            "Restart_Checkpoint_file",
-            f"true {prev_gomc_rel_chk}/Output_data_restart.chk",
-        )
+        prev_chk = io.previous_gomc_dir / "Output_data_restart.chk"
+        
+        # if not prev_chk.exists():
+        #     raise FileNotFoundError(f"Missing GOMC restart checkpoint: {prev_chk}")
+
+        # prev_chk_rel = _rel(prev_chk, gomc_newdir)
+        # out = out.replace(
+        #     "Restart_Checkpoint_file",
+        #     f"true {prev_chk_rel}",
+        # )
+        if prev_chk.exists():
+            prev_chk_rel = _rel(prev_chk, gomc_newdir)
+            out = out.replace(
+                "Restart_Checkpoint_file",
+                f"true {prev_chk_rel}",
+            )
+        elif dry_run:
+            log.warning(
+                "[GOMC] Missing restart checkpoint in dry_run; "
+                "writing checkpoint-disabled config instead: %s",
+                prev_chk,
+            )
+            out = out.replace(
+                "Restart_Checkpoint_file",
+                "false Output_data_restart.chk",
+            )
+        else:
+            raise FileNotFoundError(f"Missing GOMC restart checkpoint: {prev_chk}")
     else:
         if "Restart_Checkpoint_file" in out:
-            out = out.replace("Restart_Checkpoint_file", f"false {'Output_data_restart.chk'}")
+            out = out.replace(
+                "Restart_Checkpoint_file",
+                "false Output_data_restart.chk",
+            )
+
 
     out_path = gomc_newdir / "in.conf"
     _save_text(out_path, out)
     log.info(f"[GOMC] Wrote config: {out_path}")
     return gomc_newdir
+
+

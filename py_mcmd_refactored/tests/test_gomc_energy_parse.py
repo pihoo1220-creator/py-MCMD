@@ -34,7 +34,7 @@ def test_parse_energy_box0_basic():
         "ENER_0: ENER_0: 0 1.0 2.0 3.0\n",
         "ENER_0: ENER_0: 5 10.0 20.0 30.0\n",
     ]
-    cfg = _cfg(step=100, scale=0.5)
+    cfg = _cfg(step=100, scale=0.5) 
     df = get_gomc_energy_data(cfg, lines, box_number=0)
 
     # Columns preserved from ETITLE

@@ -75,6 +75,31 @@ class GomcEngine(BaseEngine):
     #     # Implement the logic to run GOMC simulation using the template
     #     pass
 
+    # def __init__(self, cfg, engine_type="GOMC", dry_run: bool = False):
+    #     super().__init__(cfg, engine_type, dry_run=dry_run)
+    #     self.dry_run = dry_run
+
+    #     self.bin_dir = Path(cfg.gomc_bin_directory)
+    #     self.path_template = Path(cfg.path_gomc_template) if cfg.path_gomc_template else None
+
+    #     exe_name = "GOMC_GPU" if cfg.gomc_use_CPU_or_GPU == "GPU" else "GOMC_CPU"
+        
+    #     if self.bin_dir.exists():
+    #         self.exec_path = str((self.bin_dir / exe_name).resolve())
+    #         self.exec_name = exe_name
+    #     else:
+    #         if self.dry_run:
+    #             logger.warning("GOMC bin dir %s not found; continuing in dry_run.", self.bin_dir)
+    #             self.exec_path = exe_name
+    #             self.exec_name = exe_name
+    #         else:
+    #             raise FileNotFoundError(f"GOMC binary directory {self.bin_dir} does not exist.")
+
+    #     # IMPORTANT: do NOT use `self.run_steps` as an int (it must remain callable)
+    #     self.steps_per_run = int(getattr(cfg, "gomc_run_steps", 0))
+
+    #     self.runner = SubprocessRunner(dry_run=self.dry_run)
+
     def __init__(self, cfg, engine_type="GOMC", dry_run: bool = False):
         super().__init__(cfg, engine_type, dry_run=dry_run)
         self.dry_run = dry_run
@@ -82,22 +107,39 @@ class GomcEngine(BaseEngine):
         self.bin_dir = Path(cfg.gomc_bin_directory)
         self.path_template = Path(cfg.path_gomc_template) if cfg.path_gomc_template else None
 
-        exe_name = "GOMC_GPU" if cfg.gomc_use_CPU_or_GPU == "GPU" else "GOMC_CPU"
-        
+        cpu_or_gpu = str(cfg.gomc_use_CPU_or_GPU).upper()
+        ensemble = str(cfg.simulation_type).upper()
+
+        candidate_names = [
+            f"GOMC_{cpu_or_gpu}_{ensemble}",   # legacy-compatible
+            f"GOMC_{cpu_or_gpu}",             # fallback, only if your local build uses this name
+        ]
+
         if self.bin_dir.exists():
-            self.exec_path = str((self.bin_dir / exe_name).resolve())
-            self.exec_name = exe_name
+            found = None
+            for name in candidate_names:
+                candidate = (self.bin_dir / name).resolve()
+                if candidate.exists():
+                    found = candidate
+                    break
+
+            if found is None:
+                raise FileNotFoundError(
+                    f"[GOMC] Executable not found in {self.bin_dir}. "
+                    f"Tried: {candidate_names}"
+                )
+
+            self.exec_path = str(found)
+            self.exec_name = found.name
         else:
             if self.dry_run:
                 logger.warning("GOMC bin dir %s not found; continuing in dry_run.", self.bin_dir)
-                self.exec_path = exe_name
-                self.exec_name = exe_name
+                self.exec_path = candidate_names[0]
+                self.exec_name = candidate_names[0]
             else:
                 raise FileNotFoundError(f"GOMC binary directory {self.bin_dir} does not exist.")
 
-        # IMPORTANT: do NOT use `self.run_steps` as an int (it must remain callable)
         self.steps_per_run = int(getattr(cfg, "gomc_run_steps", 0))
-
         self.runner = SubprocessRunner(dry_run=self.dry_run)
 
     def run(self):
@@ -175,6 +217,7 @@ class GomcEngine(BaseEngine):
             run_no=int(run_no),
             sim=sim,
             starts=starts,
+            dry_run=self.dry_run,
         )
 
         
@@ -227,7 +270,7 @@ class GomcEngine(BaseEngine):
         try:
             lines = (Path(gomc_newdir) / "out.dat").read_text(errors="ignore").splitlines(True)
 
-            df0 = get_gomc_energy_data(lines, box0)
+            df0 = get_gomc_energy_data(self.cfg, lines, box0)
             (
                 _e_elect0,
                 _e_elect0_i,
@@ -249,7 +292,7 @@ class GomcEngine(BaseEngine):
             state.energy_box0.gomc_vdw_plus_elec_final = vpe0_f
 
             if two_box:
-                df1 = get_gomc_energy_data(lines, box1)
+                df1 = get_gomc_energy_data(self.cfg,lines, box1)
                 (
                     _e_elect1,
                     _e_elect1_i,
