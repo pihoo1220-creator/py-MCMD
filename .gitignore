@@ -1,5 +1,6 @@
 sim_output_legacy/
 sim_output_refactor_dry_run/
+sim_output_refactor_real_run/
 GOMC/
 NAMD/
 logs/
