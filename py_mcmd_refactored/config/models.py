@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import List, Dict, Optional, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict, StrictBool
 
 
 class SimulationConfig(BaseModel):
@@ -39,6 +39,14 @@ class SimulationConfig(BaseModel):
         description=(
             "NAMD execution order for two-box GEMC runs: 'series' or 'parallel'. "
             "Defaults to 'series'."
+        ),
+    )
+
+    developer_mode: StrictBool = Field(
+        default=False,
+        description=(
+            "Enable developer-mode dual-write behavior for FIFO-managed outputs. "
+            "Defaults to false when omitted."
         ),
     )
 

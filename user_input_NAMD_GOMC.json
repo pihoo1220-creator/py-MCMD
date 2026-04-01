@@ -23,4 +23,6 @@
 "starting_pdb_box_1_file": "required_data/equilb_box_298K/TIPS3P_reservoir_box_1.pdb",
 "starting_psf_box_1_file": "required_data/equilb_box_298K/TIPS3P_reservoir_box_1.psf",
 "namd2_bin_directory": "../NAMD_2.14_Linux-x86_64-multicore",
-"gomc_bin_directory":"../GOMC/bin"}
+"gomc_bin_directory":"../GOMC/bin",
+"developer_mode": true
+}

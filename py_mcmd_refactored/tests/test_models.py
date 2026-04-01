@@ -142,3 +142,21 @@ def test_namd_simulation_order_rejects_invalid_value():
     data["namd_simulation_order"] = "not-a-real-mode"
     with pytest.raises(ValidationError):
         SimulationConfig(**data)
+
+def test_developer_mode_defaults_to_false_when_absent():
+    cfg = SimulationConfig(**minimal_config())
+    assert cfg.developer_mode is False
+
+
+def test_developer_mode_accepts_true_bool():
+    data = minimal_config()
+    data["developer_mode"] = True
+    cfg = SimulationConfig(**data)
+    assert cfg.developer_mode is True
+
+
+def test_developer_mode_rejects_non_bool_values():
+    data = minimal_config()
+    data["developer_mode"] = "true"
+    with pytest.raises(ValidationError):
+        SimulationConfig(**data)

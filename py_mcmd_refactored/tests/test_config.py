@@ -309,3 +309,22 @@ def test_total_and_starting_sims_dump():
     dumped = cfg.model_dump()
     assert dumped["total_sims_namd_gomc"] == 6
     assert dumped["starting_sims_namd_gomc"] == 2
+
+def test_load_config_defaults_developer_mode_to_false(tmp_path: Path):
+    data = make_cfg().model_dump()
+    data.pop("developer_mode", None)
+    json_path = tmp_path / "user_input.json"
+    json_path.write_text(json.dumps(data, indent=2))
+
+    cfg = load_simulation_config(str(json_path))
+    assert cfg.developer_mode is False
+
+
+def test_load_config_reads_explicit_developer_mode_true(tmp_path: Path):
+    data = make_cfg().model_dump()
+    data["developer_mode"] = True
+    json_path = tmp_path / "user_input.json"
+    json_path.write_text(json.dumps(data, indent=2))
+
+    cfg = load_simulation_config(str(json_path))
+    assert cfg.developer_mode is True
