@@ -13,6 +13,8 @@ from engines.namd.energy_compare import compare_namd_gomc_energies
 from utils.path import format_cycle_id
 from utils.subprocess_runner import Command, SubprocessRunner
 from orchestrator.state import RunState
+from utils.persisted_file_lists import persisted_output_path
+
 import time
 
 logger = logging.getLogger(__name__)
@@ -257,10 +259,15 @@ class NamdEngine(BaseEngine):
     # )
 
     def run_steps(self, *, run_dir: Path, cores: int) -> int:
+        # cmd = Command(
+        #     argv=[str(self.exec_path), f"+p{int(cores)}", "in.conf"],
+        #     cwd=Path(run_dir),
+        #     stdout_path=Path(run_dir) / "out.dat",
+        # )
         cmd = Command(
             argv=[str(self.exec_path), f"+p{int(cores)}", "in.conf"],
             cwd=Path(run_dir),
-            stdout_path=Path(run_dir) / "out.dat",
+            stdout_path=persisted_output_path("NAMD", run_dir, "out.dat"),
         )
         return self.runner.run_and_wait(cmd)
     
@@ -464,19 +471,29 @@ class NamdEngine(BaseEngine):
         mode = self.cfg.namd_simulation_order if two_box else "series"
 
         cores0 = int(self.cfg.total_no_cores) if (not two_box or mode == "series") else int(self.cfg.no_core_box_0)
+        # cmd0 = Command(
+        #     argv=[str(self.exec_path), f"+p{cores0}", "in.conf"],
+        #     cwd=Path(namd_box0_dir),
+        #     stdout_path=Path(namd_box0_dir) / "out.dat",
+        # )
         cmd0 = Command(
             argv=[str(self.exec_path), f"+p{cores0}", "in.conf"],
             cwd=Path(namd_box0_dir),
-            stdout_path=Path(namd_box0_dir) / "out.dat",
+            stdout_path=persisted_output_path("NAMD", namd_box0_dir, "out.dat"),
         )
 
         cmd1: Optional[Command] = None
         if two_box and namd_box1_dir is not None:
             cores1 = int(self.cfg.total_no_cores) if mode == "series" else int(self.cfg.no_core_box_1)
+            # cmd1 = Command(
+            #     argv=[str(self.exec_path), f"+p{cores1}", "in.conf"],
+            #     cwd=Path(namd_box1_dir),
+            #     stdout_path=Path(namd_box1_dir) / "out.dat",
+            # )
             cmd1 = Command(
                 argv=[str(self.exec_path), f"+p{cores1}", "in.conf"],
                 cwd=Path(namd_box1_dir),
-                stdout_path=Path(namd_box1_dir) / "out.dat",
+                stdout_path=persisted_output_path("NAMD", namd_box1_dir, "out.dat"),
             )
 
         # rc0 = rc1 = None

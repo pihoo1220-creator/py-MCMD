@@ -6,6 +6,7 @@ from typing import Literal, Optional, List
 
 from config.models import SimulationConfig
 from utils.subprocess_runner import Command
+from utils.persisted_file_lists import persisted_output_path
 
 
 @dataclass(frozen=True)
@@ -41,10 +42,15 @@ def build_namd_execution_plan(
 
     if not two_box:
         cores0 = int(cfg.total_no_cores)
+        # cmd0 = Command(
+        #     argv=[exec_path, f"+p{cores0}", "in.conf"],
+        #     cwd=Path(box0_dir),
+        #     stdout_path=Path(box0_dir) / "out.dat",
+        # )
         cmd0 = Command(
             argv=[exec_path, f"+p{cores0}", "in.conf"],
             cwd=Path(box0_dir),
-            stdout_path=Path(box0_dir) / "out.dat",
+            stdout_path=persisted_output_path("NAMD", box0_dir, "out.dat"),
         )
         return NamdExecutionPlan(mode="series", box0=cmd0, box1=None)
 
@@ -61,14 +67,25 @@ def build_namd_execution_plan(
         cores0 = int(cfg.no_core_box_0)
         cores1 = int(cfg.no_core_box_1)
 
+    # cmd0 = Command(
+    #     argv=[exec_path, f"+p{cores0}", "in.conf"],
+    #     cwd=Path(box0_dir),
+    #     stdout_path=Path(box0_dir) / "out.dat",
+    # )
+
+    # cmd1 = Command(
+    #     argv=[exec_path, f"+p{cores1}", "in.conf"],
+    #     cwd=Path(box1_dir),
+    #     stdout_path=Path(box1_dir) / "out.dat",
+    # )
     cmd0 = Command(
         argv=[exec_path, f"+p{cores0}", "in.conf"],
         cwd=Path(box0_dir),
-        stdout_path=Path(box0_dir) / "out.dat",
+        stdout_path=persisted_output_path("NAMD", box0_dir, "out.dat"),
     )
     cmd1 = Command(
         argv=[exec_path, f"+p{cores1}", "in.conf"],
         cwd=Path(box1_dir),
-        stdout_path=Path(box1_dir) / "out.dat",
+        stdout_path=persisted_output_path("NAMD", box1_dir, "out.dat"),
     )
     return NamdExecutionPlan(mode=mode, box0=cmd0, box1=cmd1)

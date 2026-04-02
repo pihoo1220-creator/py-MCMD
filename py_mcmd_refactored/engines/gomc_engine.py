@@ -25,6 +25,7 @@ from engines.namd.energy_compare import compare_namd_gomc_energies
 
 from utils.subprocess_runner import Command, SubprocessRunner
 from orchestrator.state import RunState
+from utils.persisted_file_lists import persisted_output_path
 import time
 
 logger = logging.getLogger(__name__)
@@ -160,10 +161,15 @@ class GomcEngine(BaseEngine):
         return (repo_root / "GOMC" / "bin").resolve()
     
     def run_steps(self, *, run_dir: Path, cores: int) -> int:
+        # cmd = Command(
+        #     argv=[str(self.exec_path), f"+p{int(cores)}", "in.conf"],
+        #     cwd=Path(run_dir),
+        #     stdout_path=Path(run_dir) / "out.dat",
+        # )
         cmd = Command(
             argv=[str(self.exec_path), f"+p{int(cores)}", "in.conf"],
             cwd=Path(run_dir),
-            stdout_path=Path(run_dir) / "out.dat",
+            stdout_path=persisted_output_path("GOMC", run_dir, "out.dat"),
         )
         return self.runner.run_and_wait(cmd)
     
@@ -240,10 +246,15 @@ class GomcEngine(BaseEngine):
         state.gomc_dir = Path(gomc_newdir)
 
         # 2) Execute GOMC (stdout -> out.dat)
+        # cmd = Command(
+        #     argv=[str(self.exec_path), f"+p{int(self.cfg.total_no_cores)}", "in.conf"],
+        #     cwd=Path(gomc_newdir),
+        #     stdout_path=Path(gomc_newdir) / "out.dat",
+        # )
         cmd = Command(
             argv=[str(self.exec_path), f"+p{int(self.cfg.total_no_cores)}", "in.conf"],
             cwd=Path(gomc_newdir),
-            stdout_path=Path(gomc_newdir) / "out.dat",
+            stdout_path=persisted_output_path("GOMC", gomc_newdir, "out.dat"),
         )
 
         # h = self.runner.start(cmd)
