@@ -26,6 +26,7 @@ from engines.namd.energy_compare import compare_namd_gomc_energies
 from utils.subprocess_runner import Command, SubprocessRunner
 from orchestrator.state import RunState
 from utils.persisted_file_lists import persisted_output_path
+
 import time
 
 logger = logging.getLogger(__name__)
@@ -160,25 +161,38 @@ class GomcEngine(BaseEngine):
         repo_root = py_root.parent                        # repo root containing py_mcmd_refactored/
         return (repo_root / "GOMC" / "bin").resolve()
     
-    def run_steps(self, *, run_dir: Path, cores: int) -> int:
-        # cmd = Command(
-        #     argv=[str(self.exec_path), f"+p{int(cores)}", "in.conf"],
-        #     cwd=Path(run_dir),
-        #     stdout_path=Path(run_dir) / "out.dat",
-        # )
+    # def run_steps(self, *, run_dir: Path, cores: int) -> int:
+    #     # cmd = Command(
+    #     #     argv=[str(self.exec_path), f"+p{int(cores)}", "in.conf"],
+    #     #     cwd=Path(run_dir),
+    #     #     stdout_path=Path(run_dir) / "out.dat",
+    #     # )
+    #     cmd = Command(
+    #         argv=[str(self.exec_path), f"+p{int(cores)}", "in.conf"],
+    #         cwd=Path(run_dir),
+    #         stdout_path=persisted_output_path("GOMC", run_dir, "out.dat"),
+    #     )
+    #     return self.runner.run_and_wait(cmd)
+
+    def run_steps(self, *, run_dir: Path, cores: int, fifo_resources=None) -> int:
         cmd = Command(
             argv=[str(self.exec_path), f"+p{int(cores)}", "in.conf"],
             cwd=Path(run_dir),
-            stdout_path=persisted_output_path("GOMC", run_dir, "out.dat"),
+            **self._stdout_command_kwargs(
+                run_dir=Path(run_dir),
+                fifo_resources=fifo_resources,
+            ),
         )
         return self.runner.run_and_wait(cmd)
+
     
     def _two_box_enabled(self) -> bool:
         # In legacy, box1 energies are parsed for GEMC and GCMC
         return self.cfg.simulation_type in ("GEMC", "GCMC")
 
 
-    def run_segment(self, *, run_no: int, state: RunState) -> dict:
+    # def run_segment(self, *, run_no: int, state: RunState) -> dict:
+    def run_segment(self, *, run_no: int, state: RunState, fifo_resources=None) -> dict:
         """Run the full GOMC segment for an odd run_no and update RunState."""
         if int(run_no) % 2 != 1:
             raise ValueError(f"GOMC segment must be called for odd run_no; got run_no={run_no}")
@@ -251,10 +265,20 @@ class GomcEngine(BaseEngine):
         #     cwd=Path(gomc_newdir),
         #     stdout_path=Path(gomc_newdir) / "out.dat",
         # )
+        
+        # cmd = Command(
+        #     argv=[str(self.exec_path), f"+p{int(self.cfg.total_no_cores)}", "in.conf"],
+        #     cwd=Path(gomc_newdir),
+        #     stdout_path=persisted_output_path("GOMC", gomc_newdir, "out.dat"),
+        # )
+
         cmd = Command(
             argv=[str(self.exec_path), f"+p{int(self.cfg.total_no_cores)}", "in.conf"],
             cwd=Path(gomc_newdir),
-            stdout_path=persisted_output_path("GOMC", gomc_newdir, "out.dat"),
+            **self._stdout_command_kwargs(
+                run_dir=Path(gomc_newdir),
+                fifo_resources=fifo_resources,
+            ),
         )
 
         # h = self.runner.start(cmd)
@@ -417,3 +441,23 @@ class GomcEngine(BaseEngine):
             else:
                 # Minimal placeholder; typically the writer just references this path
                 psf_path.write_text("PSF\n", encoding="utf-8")
+
+    #FIFO helper
+    def _stdout_command_kwargs(
+        self,
+        *,
+        run_dir: Path,
+        fifo_resources=None,
+    ) -> dict:
+        persisted_disk_path = persisted_output_path("GOMC", run_dir, "out.dat")
+
+        if fifo_resources is None:
+            return {
+                "stdout_path": persisted_disk_path,
+            }
+
+        return {
+            "stdout_path": None,
+            "stdout_fifo_path": fifo_resources.endpoints["out.dat"].fifo_path,
+            "stdout_disk_path": persisted_disk_path,
+        }

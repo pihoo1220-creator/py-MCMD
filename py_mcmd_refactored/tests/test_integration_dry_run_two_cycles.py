@@ -192,18 +192,39 @@ def test_integration_dry_run_two_cycles(tmp_path: Path, monkeypatch):
     RealNamd = ne.NamdEngine
     RealGomc = ge.GomcEngine
 
+    # class TrackedNamd(RealNamd):
+    #     def run_segment(self, *, run_no: int, state):
+    #         call_order.append(("NAMD", int(run_no)))
+    #         # Provide deterministic timing for TIME_STATS
+    #         state.timings.max_namd_cycle_time_s = 10.0
+    #         return super().run_segment(run_no=run_no, state=state)
+
+    # class TrackedGomc(RealGomc):
+    #     def run_segment(self, *, run_no: int, state):
+    #         call_order.append(("GOMC", int(run_no)))
+    #         state.timings.gomc_cycle_time_s = 5.0
+    #         return super().run_segment(run_no=run_no, state=state)
+
     class TrackedNamd(RealNamd):
-        def run_segment(self, *, run_no: int, state):
+        def run_segment(self, *, run_no: int, state, fifo_resources=None):
             call_order.append(("NAMD", int(run_no)))
-            # Provide deterministic timing for TIME_STATS
             state.timings.max_namd_cycle_time_s = 10.0
-            return super().run_segment(run_no=run_no, state=state)
+            return super().run_segment(
+                run_no=run_no,
+                state=state,
+                fifo_resources=fifo_resources,
+            )
+
 
     class TrackedGomc(RealGomc):
-        def run_segment(self, *, run_no: int, state):
+        def run_segment(self, *, run_no: int, state, fifo_resources=None):
             call_order.append(("GOMC", int(run_no)))
             state.timings.gomc_cycle_time_s = 5.0
-            return super().run_segment(run_no=run_no, state=state)
+            return super().run_segment(
+                run_no=run_no,
+                state=state,
+                fifo_resources=fifo_resources,
+            )
 
     monkeypatch.setattr(mgr, "NamdEngine", TrackedNamd)
     monkeypatch.setattr(mgr, "GomcEngine", TrackedGomc)

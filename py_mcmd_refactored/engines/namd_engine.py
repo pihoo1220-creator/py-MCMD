@@ -20,65 +20,11 @@ import time
 logger = logging.getLogger(__name__)
 # from __future__ import annotations
 
-# import os
-# import logging
-# from datetime import datetime
-# from pathlib import Path
-# from typing import Optional
-# from engines.base import Engine as BaseEngine
-# from engines.namd.constants import DEFAULT_NAMD_E_TITLES_LIST
-# from engines.namd.energy import get_namd_energy_data
-# from engines.namd.energy_compare import compare_namd_gomc_energies
-# from engines.namd.namd_writer import write_namd_conf_file
-# # from run_NAMD_GOMC_refactored import get_namd_run_0_fft_filename
-# from py_mcmd_refactored.tests.test_namd_energy_compare import cfg
-# from utils.path import format_cycle_id
-# from engines.namd.parser import extract_pme_grid_from_out
-# from engines.namd.parser import find_run0_fft_filename
-# from engines.namd.parser import get_run0_dir
-# from pathlib import Path
-# from typing import Callable, Optional, Tuple
-# from utils.subprocess_runner import Command, SubprocessRunner
+
 from engines.namd.plan import NamdExecutionPlan, build_namd_execution_plan
 
 logger = logging.getLogger(__name__)
 class NamdEngine(BaseEngine):
-    # def __init__(self, cfg, engine_type="NAMD", dry_run: bool = False):
-    #     super().__init__(cfg, engine_type)
-    #     self.dry_run = dry_run
-
-    #     # runner is required for end-to-end segment execution
-    #     self.runner = SubprocessRunner(dry_run=self.dry_run)
-
-    #     self.bin_dir = Path(cfg.namd2_bin_directory)
-
-
-    #     self.path_template = Path(cfg.path_namd_template) if cfg.path_namd_template else None
-    #     if self.bin_dir.exists():
-    #         self.exec_path = self.bin_dir / "namd2"
-    #         # self.exec_path= "{}/{}/{}".format(
-    #         #     str(os.getcwd()),
-    #         #     self.bin_dir,
-    #         #     "namd2"
-    #         #     )
-    #     else:
-    #         if self.dry_run:
-    #             logger.warning("NAMD bin dir %s not found; continuing in dry_run.", self.bin_dir)
-    #             # self.exec_path = self.bin_dir / "namd2"  # placeholder
-    #             self.exec_path = "namd2"
-    #         else:
-    #             raise FileNotFoundError(f"NAMD binary directory {self.bin_dir} does not exist.")
-            
-    #     # ... use namd_template when generating the per-cycle NAMD input ...
-        
-    #     # self.run_steps = int(getattr(cfg, "namd_run_steps", 0))
-    #     self.runner = SubprocessRunner(dry_run=self.dry_run)
-    #     self.steps_per_run = int(getattr(cfg, "namd_run_steps", 0))
-
-
-    # def run(self):
-    #     # Implement the logic to run NAMD simulation using the template
-    #     pass
 
 
     def __init__(self, cfg, engine_type="NAMD", dry_run: bool = False):
@@ -258,16 +204,36 @@ class NamdEngine(BaseEngine):
     #     run_no, box_number,
     # )
 
-    def run_steps(self, *, run_dir: Path, cores: int) -> int:
-        # cmd = Command(
-        #     argv=[str(self.exec_path), f"+p{int(cores)}", "in.conf"],
-        #     cwd=Path(run_dir),
-        #     stdout_path=Path(run_dir) / "out.dat",
-        # )
+    # def run_steps(self, *, run_dir: Path, cores: int) -> int:
+    #     # cmd = Command(
+    #     #     argv=[str(self.exec_path), f"+p{int(cores)}", "in.conf"],
+    #     #     cwd=Path(run_dir),
+    #     #     stdout_path=Path(run_dir) / "out.dat",
+    #     # )
+        
+    #     cmd = Command(
+    #         argv=[str(self.exec_path), f"+p{int(cores)}", "in.conf"],
+    #         cwd=Path(run_dir),
+    #         stdout_path=persisted_output_path("NAMD", run_dir, "out.dat"),
+    #     )
+    #     return self.runner.run_and_wait(cmd)
+
+    def run_steps(
+        self,
+        *,
+        run_dir: Path,
+        cores: int,
+        fifo_resources=None,
+        fifo_basename: str = "box0.out.dat",
+    ) -> int:
         cmd = Command(
             argv=[str(self.exec_path), f"+p{int(cores)}", "in.conf"],
             cwd=Path(run_dir),
-            stdout_path=persisted_output_path("NAMD", run_dir, "out.dat"),
+            **self._stdout_command_kwargs(
+                run_dir=Path(run_dir),
+                fifo_resources=fifo_resources,
+                fifo_basename=fifo_basename,
+            ),
         )
         return self.runner.run_and_wait(cmd)
     
@@ -358,7 +324,8 @@ class NamdEngine(BaseEngine):
         return (self.cfg.simulation_type == "GEMC") and (self.cfg.only_use_box_0_for_namd_for_gemc is False)
 
 
-    def run_segment(self, *, run_no: int, state: RunState) -> dict:
+    # def run_segment(self, *, run_no: int, state: RunState) -> dict:
+    def run_segment(self, *, run_no: int, state: RunState, fifo_resources=None) -> dict:
         """Run the full NAMD segment for an even run_no and update RunState."""
         if int(run_no) % 2 != 0:
             raise ValueError(f"NAMD segment must be called for even run_no; got run_no={run_no}")
@@ -476,10 +443,21 @@ class NamdEngine(BaseEngine):
         #     cwd=Path(namd_box0_dir),
         #     stdout_path=Path(namd_box0_dir) / "out.dat",
         # )
+        
+        # cmd0 = Command(
+        #     argv=[str(self.exec_path), f"+p{cores0}", "in.conf"],
+        #     cwd=Path(namd_box0_dir),
+        #     stdout_path=persisted_output_path("NAMD", namd_box0_dir, "out.dat"),
+        # )
+
         cmd0 = Command(
             argv=[str(self.exec_path), f"+p{cores0}", "in.conf"],
             cwd=Path(namd_box0_dir),
-            stdout_path=persisted_output_path("NAMD", namd_box0_dir, "out.dat"),
+            **self._stdout_command_kwargs(
+                run_dir=Path(namd_box0_dir),
+                fifo_resources=fifo_resources,
+                fifo_basename="box0.out.dat",
+            ),
         )
 
         cmd1: Optional[Command] = None
@@ -490,10 +468,21 @@ class NamdEngine(BaseEngine):
             #     cwd=Path(namd_box1_dir),
             #     stdout_path=Path(namd_box1_dir) / "out.dat",
             # )
+            
+            # cmd1 = Command(
+            #     argv=[str(self.exec_path), f"+p{cores1}", "in.conf"],
+            #     cwd=Path(namd_box1_dir),
+            #     stdout_path=persisted_output_path("NAMD", namd_box1_dir, "out.dat"),
+            # )
+
             cmd1 = Command(
                 argv=[str(self.exec_path), f"+p{cores1}", "in.conf"],
                 cwd=Path(namd_box1_dir),
-                stdout_path=persisted_output_path("NAMD", namd_box1_dir, "out.dat"),
+                **self._stdout_command_kwargs(
+                    run_dir=Path(namd_box1_dir),
+                    fifo_resources=fifo_resources,
+                    fifo_basename="box1.out.dat",
+                ),
             )
 
         # rc0 = rc1 = None
@@ -663,3 +652,24 @@ class NamdEngine(BaseEngine):
         if self.cfg.simulation_type == "GEMC" and (self.cfg.only_use_box_0_for_namd_for_gemc is False):
             if state.pme_box1.x is None or state.pme_box1.y is None or state.pme_box1.z is None:
                 state.pme_box1.x, state.pme_box1.y, state.pme_box1.z = 48, 48, 48
+
+    #FIFO helpers
+    def _stdout_command_kwargs(
+        self,
+        *,
+        run_dir: Path,
+        fifo_resources=None,
+        fifo_basename: str,
+    ) -> dict:
+        persisted_disk_path = persisted_output_path("NAMD", run_dir, "out.dat")
+
+        if fifo_resources is None:
+            return {
+                "stdout_path": persisted_disk_path,
+            }
+
+        return {
+            "stdout_path": None,
+            "stdout_fifo_path": fifo_resources.endpoints[fifo_basename].fifo_path,
+            "stdout_disk_path": persisted_disk_path,
+        }

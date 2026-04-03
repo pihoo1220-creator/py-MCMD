@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+import os
+import stat
 
 from utils.subprocess_runner import Command, DryRunSubprocessRunner, SubprocessRunner
 
@@ -48,3 +50,25 @@ def test_runner_invokes_popen_with_cwd_and_redirect(monkeypatch, tmp_path: Path)
     assert calls["stderr"] == subprocess.STDOUT
     assert calls["text"] is True
     assert Path(calls["stdout"].name) == tmp_path / "out.dat"
+
+def test_dry_run_fifo_mode_keeps_fifo_and_writes_disk_mirror(tmp_path: Path):
+    runner = DryRunSubprocessRunner()
+
+    fifo_path = tmp_path / "stdout.pipe"
+    os.mkfifo(fifo_path)
+    disk_path = tmp_path / "out.dat"
+
+    cmd = Command(
+        argv=["/bin/echo", "hello"],
+        cwd=tmp_path,
+        stdout_fifo_path=fifo_path,
+        stdout_disk_path=disk_path,
+    )
+
+    handle = runner.start(cmd)
+    rc = runner.wait(handle)
+
+    assert rc == 0
+    assert disk_path.exists()
+    assert "dry_run" in disk_path.read_text()
+    assert stat.S_ISFIFO(fifo_path.stat().st_mode)
