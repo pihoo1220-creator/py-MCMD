@@ -206,3 +206,43 @@ def test_delete_run0_fft_invalid_box_raises(tmp_path):
     with pytest.raises(ValueError) as ei:
         eng.delete_namd_run_0_fft_file(2)
     assert "ERROR Enter an interger of 0 or 1" in str(ei.value)
+
+def test_cache_run0_fft_file_copies_fft_into_managed_cache(tmp_path: Path):
+    cfg = make_cfg(tmp_path)
+    eng = NamdEngine(cfg, dry_run=True)
+
+    runtime_root = tmp_path / "managed_runtime" / "NAMD"
+    run0_dir = runtime_root / "0000000000_a"
+    run0_dir.mkdir(parents=True, exist_ok=True)
+
+    fft_name = "FFTW_NAMD_plan.txt"
+    src = run0_dir / fft_name
+    src.write_text("fft")
+
+    managed_root = tmp_path / "managed_runtime"
+    cached = eng.cache_run0_fft_file(
+        0,
+        run_root=runtime_root,
+        managed_root=managed_root,
+    )
+
+    assert cached == managed_root / "_engine_cache" / "NAMD" / "run0_fft_box0" / fft_name
+    assert cached.exists()
+    assert cached.read_text() == "fft"
+
+
+def test_get_cached_run0_fft_filename_returns_cached_entry(tmp_path: Path):
+    cfg = make_cfg(tmp_path)
+    eng = NamdEngine(cfg, dry_run=True)
+
+    managed_root = tmp_path / "managed_runtime"
+    cache_dir = managed_root / "_engine_cache" / "NAMD" / "run0_fft_box0"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    fft_name = "FFTW_NAMD_plan.txt"
+    (cache_dir / fft_name).write_text("fft")
+
+    name, dir_str = eng.get_cached_run0_fft_filename(0, managed_root=managed_root)
+
+    assert name == fft_name
+    assert Path(dir_str) == cache_dir

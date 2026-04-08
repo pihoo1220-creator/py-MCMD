@@ -99,7 +99,25 @@ def test_link_run0_fft_noop_when_not_found(tmp_path: Path, monkeypatch):
     assert list(dest_dir.iterdir()) == []
 
 
-def test_link_run0_fft_creates_placeholder_in_dry_run(tmp_path: Path, monkeypatch):
+# def test_link_run0_fft_creates_placeholder_in_dry_run(tmp_path: Path, monkeypatch):
+#     cfg = make_cfg(tmp_path)
+#     eng = NamdEngine(cfg, dry_run=True)
+
+#     dest_dir = tmp_path / "NAMD" / "00000002_a"
+#     dest_dir.mkdir(parents=True, exist_ok=True)
+
+#     run0_dir = tmp_path / "NAMD" / "00000000_a"
+#     fft_name = "FFTW_NAMD_plan.txt"
+#     monkeypatch.setattr(NamdEngine, "get_run0_fft_filename", lambda self, bn: (fft_name, str(run0_dir)))
+
+#     eng.link_run0_fft_file_into_dir(0, dest_dir)
+
+#     src = run0_dir / fft_name
+#     dst = dest_dir / fft_name
+#     assert src.exists()
+#     assert dst.is_symlink()
+#     assert dst.resolve() == src.resolve()
+def test_link_run0_fft_skips_missing_source_file_in_dry_run(tmp_path: Path, monkeypatch):
     cfg = make_cfg(tmp_path)
     eng = NamdEngine(cfg, dry_run=True)
 
@@ -107,13 +125,45 @@ def test_link_run0_fft_creates_placeholder_in_dry_run(tmp_path: Path, monkeypatc
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     run0_dir = tmp_path / "NAMD" / "00000000_a"
+    run0_dir.mkdir(parents=True, exist_ok=True)
+
     fft_name = "FFTW_NAMD_plan.txt"
-    monkeypatch.setattr(NamdEngine, "get_run0_fft_filename", lambda self, bn: (fft_name, str(run0_dir)))
+    monkeypatch.setattr(
+        NamdEngine,
+        "get_run0_fft_filename",
+        lambda self, bn: (fft_name, str(run0_dir)),
+    )
 
     eng.link_run0_fft_file_into_dir(0, dest_dir)
 
     src = run0_dir / fft_name
     dst = dest_dir / fft_name
-    assert src.exists()
+
+    assert not src.exists()
+    assert not dst.exists()
+
+def test_link_run0_fft_prefers_cached_copy_when_runtime_run0_removed(tmp_path: Path):
+    cfg = make_cfg(tmp_path)
+    eng = NamdEngine(cfg, dry_run=True)
+
+    managed_root = tmp_path / "managed"
+    cache_dir = managed_root / "_engine_cache" / "NAMD" / "run0_fft_box0"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    fft_name = "FFTW_NAMD_plan.txt"
+    cached_src = cache_dir / fft_name
+    cached_src.write_text("cached")
+
+    dest_dir = tmp_path / "NAMD" / "00000004_a"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    eng.link_run0_fft_file_into_dir(
+        0,
+        dest_dir,
+        run_root=tmp_path / "missing_runtime",
+        managed_root=managed_root,
+    )
+
+    dst = dest_dir / fft_name
     assert dst.is_symlink()
-    assert dst.resolve() == src.resolve()
+    assert dst.resolve() == cached_src.resolve()

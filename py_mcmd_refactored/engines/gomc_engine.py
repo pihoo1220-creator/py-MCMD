@@ -23,6 +23,7 @@ from engines.gomc.energy_metrics import get_gomc_energy_data_kcal_per_mol
 
 from engines.namd.energy_compare import compare_namd_gomc_energies
 
+from py_mcmd_refactored.utils.path import format_cycle_id
 from utils.subprocess_runner import Command, SubprocessRunner
 from orchestrator.state import RunState
 from utils.persisted_file_lists import persisted_output_path
@@ -194,6 +195,9 @@ class GomcEngine(BaseEngine):
     # def run_segment(self, *, run_no: int, state: RunState) -> dict:
     def run_segment(self, *, run_no: int, state: RunState, fifo_resources=None) -> dict:
         """Run the full GOMC segment for an odd run_no and update RunState."""
+
+        runtime_gomc_root = self._runtime_gomc_root(fifo_resources)
+
         if int(run_no) % 2 != 1:
             raise ValueError(f"GOMC segment must be called for odd run_no; got run_no={run_no}")
 
@@ -207,7 +211,8 @@ class GomcEngine(BaseEngine):
 
         io = GOMCIOPaths(
             python_file_directory=python_file_directory,
-            path_gomc_runs=Path(self.cfg.path_gomc_runs),
+            # path_gomc_runs=Path(self.cfg.path_gomc_runs),
+            path_gomc_runs=runtime_gomc_root,
             path_gomc_template=Path(self.cfg.path_gomc_template),
             namd_box_0_dir=Path(state.namd_box0_dir),
             namd_box_1_dir=Path(state.namd_box1_dir) if getattr(state, "namd_box1_dir", None) else None,
@@ -272,12 +277,24 @@ class GomcEngine(BaseEngine):
         #     stdout_path=persisted_output_path("GOMC", gomc_newdir, "out.dat"),
         # )
 
+        # cmd = Command(
+        #     argv=[str(self.exec_path), f"+p{int(self.cfg.total_no_cores)}", "in.conf"],
+        #     cwd=Path(gomc_newdir),
+        #     **self._stdout_command_kwargs(
+        #         run_dir=Path(gomc_newdir),
+        #         fifo_resources=fifo_resources,
+        #     ),
+        # )
+
+        disk_gomc_dir = self._disk_gomc_dir(fifo_resources, run_no)
+        disk_gomc_dir.mkdir(parents=True, exist_ok=True)
+
         cmd = Command(
             argv=[str(self.exec_path), f"+p{int(self.cfg.total_no_cores)}", "in.conf"],
             cwd=Path(gomc_newdir),
             **self._stdout_command_kwargs(
-                run_dir=Path(gomc_newdir),
-                fifo_resources=fifo_resources,
+                runtime_dir=Path(gomc_newdir),
+                disk_dir=disk_gomc_dir,
             ),
         )
 
@@ -443,21 +460,58 @@ class GomcEngine(BaseEngine):
                 psf_path.write_text("PSF\n", encoding="utf-8")
 
     #FIFO helper
+    # def _stdout_command_kwargs(
+    #     self,
+    #     *,
+    #     run_dir: Path,
+    #     fifo_resources=None,
+    # ) -> dict:
+    #     persisted_disk_path = persisted_output_path("GOMC", run_dir, "out.dat")
+
+    #     if fifo_resources is None:
+    #         return {
+    #             "stdout_path": persisted_disk_path,
+    #         }
+
+    #     return {
+    #         "stdout_path": None,
+    #         "stdout_fifo_path": fifo_resources.endpoints["out.dat"].fifo_path,
+    #         "stdout_disk_path": persisted_disk_path,
+    #     }
+
+    def _runtime_gomc_root(self, fifo_resources) -> Path:
+        if fifo_resources is None:
+            return Path(self.cfg.path_gomc_runs)
+        return fifo_resources.managed_root / "GOMC"
+
+    def _disk_gomc_dir(self, fifo_resources, run_no: int) -> Path:
+        step_id = format_cycle_id(run_no, 10)
+        if fifo_resources is None:
+            return Path(self.cfg.path_gomc_runs) / step_id
+        return fifo_resources.disk_dir()
+
+    # def _stdout_command_kwargs(self, *, runtime_dir: Path, disk_dir: Path) -> dict:
+    #     return {
+    #         "stdout_path": runtime_dir / "out.dat",
+    #         "stdout_disk_path": disk_dir / "out.dat",
+    #     }
     def _stdout_command_kwargs(
         self,
         *,
-        run_dir: Path,
+        runtime_dir: Optional[Path] = None,
+        disk_dir: Optional[Path] = None,
+        run_dir: Optional[Path] = None,
         fifo_resources=None,
     ) -> dict:
-        persisted_disk_path = persisted_output_path("GOMC", run_dir, "out.dat")
-
-        if fifo_resources is None:
+        if runtime_dir is not None and disk_dir is not None:
             return {
-                "stdout_path": persisted_disk_path,
+                "stdout_path": runtime_dir / "out.dat",
+                "stdout_disk_path": disk_dir / "out.dat",
             }
 
-        return {
-            "stdout_path": None,
-            "stdout_fifo_path": fifo_resources.endpoints["out.dat"].fifo_path,
-            "stdout_disk_path": persisted_disk_path,
-        }
+        if run_dir is not None:
+            return {
+                "stdout_path": persisted_output_path("GOMC", run_dir, "out.dat"),
+            }
+
+        raise TypeError("Unsupported stdout routing arguments for GomcEngine")

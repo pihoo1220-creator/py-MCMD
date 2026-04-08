@@ -56,11 +56,19 @@ class SimulationOrchestrator:
         self.dry_run = dry_run
 
         self.developer_mode = bool(getattr(cfg, "developer_mode", False))
+        # self.fifo_store = FifoStore(
+        #     root_dir=Path(self.cfg.log_dir) / ".fifo_store",
+        #     output_basenames_by_engine=_FIFO_OUTPUT_BASENAMES_BY_ENGINE,
+        #     developer_mode=self.developer_mode,
+        #     dual_write_path_factory=self._fifo_dual_write_path,
+        #     logger=self.logger,
+        # )
         self.fifo_store = FifoStore(
-            root_dir=Path(self.cfg.log_dir) / ".fifo_store",
-            output_basenames_by_engine=_FIFO_OUTPUT_BASENAMES_BY_ENGINE,
+            disk_roots={
+                "NAMD": Path(self.cfg.path_namd_runs),
+                "GOMC": Path(self.cfg.path_gomc_runs),
+            },
             developer_mode=self.developer_mode,
-            dual_write_path_factory=self._fifo_dual_write_path,
             logger=self.logger,
         )
         self._last_successful_fifo_step_by_engine = {

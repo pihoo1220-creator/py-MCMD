@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, "/home/arsalan/wsu-gomc/py-MCMD-hm/py_mcmd_refactored")
 
-from utils.fifo_store import FifoStore
+from utils.fifo_store import FifoStore, ManagedArtifactStore
 
 
 pytestmark = pytest.mark.skipif(
@@ -151,3 +151,20 @@ def test_developer_mode_records_dual_write_paths_via_hook(tmp_path: Path):
 
     assert endpoint.dual_write_path == tmp_path / "mirror" / "GOMC" / "7" / "out.dat"
     assert endpoint.dual_write_path.parent.exists()
+
+def test_managed_artifact_store_cleanup_all_removes_engine_cache(tmp_path: Path):
+    store = ManagedArtifactStore(
+        disk_roots={"NAMD": tmp_path / "NAMD", "GOMC": tmp_path / "GOMC"},
+        managed_root=tmp_path / "managed",
+    )
+
+    cache_dir = store.cache_dir("NAMD")
+    cache_file = cache_dir / "run0_fft_box0" / "FFTW_NAMD_plan.txt"
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    cache_file.write_text("fft")
+
+    assert cache_file.exists()
+
+    store.cleanup_all()
+
+    assert not cache_file.exists()
