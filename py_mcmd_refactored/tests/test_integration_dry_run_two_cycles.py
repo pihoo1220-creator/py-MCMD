@@ -254,3 +254,127 @@ def test_integration_dry_run_two_cycles(tmp_path: Path, monkeypatch):
     assert "TIME_STATS_TITLE" in lines[0]
     assert "TIME_STATS_DATA" in lines[1]
     assert "TIME_STATS_DATA" in lines[2]
+
+
+def _patch_managed_store_dry_run_dependencies(tmp_path: Path, monkeypatch):
+    import itertools
+    import engines.namd_engine as ne
+    import engines.gomc_engine as ge
+
+    tick_values = [0.0, 20.0, 100.0, 130.0]
+    ticks = itertools.chain(tick_values, itertools.repeat(tick_values[-1]))
+    monkeypatch.setattr(mgr.time, "perf_counter", lambda: next(ticks))
+
+    def fake_write_namd_conf_file(
+        python_file_directory,
+        path_namd_template,
+        path_namd_runs,
+        gomc_newdir,
+        run_no,
+        box_number,
+        *args,
+        **kwargs,
+    ):
+        root = Path(path_namd_runs)
+        root.mkdir(parents=True, exist_ok=True)
+        suffix = "a" if int(box_number) == 0 else "b"
+        run_dir = root / f"{int(run_no):010d}_{suffix}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "in.conf").write_text("# dummy namd\n", encoding="utf-8")
+        return str(run_dir)
+
+    def fake_write_gomc_conf_file(*args, **kwargs):
+        run_no = kwargs.get("run_no")
+        if run_no is None and len(args) >= 3:
+            run_no = args[2]
+        io = kwargs.get("io")
+        if io is None and len(args) >= 2:
+            io = args[1]
+
+        root = Path(io.path_gomc_runs)
+        root.mkdir(parents=True, exist_ok=True)
+        run_dir = root / f"{int(run_no):010d}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "in.conf").write_text("# dummy gomc\n", encoding="utf-8")
+        return str(run_dir)
+
+    monkeypatch.setattr(ne, "write_namd_conf_file", fake_write_namd_conf_file)
+    monkeypatch.setattr(ge, "write_gomc_conf_file", fake_write_gomc_conf_file)
+
+    monkeypatch.setattr(
+        ne,
+        "get_namd_energy_data",
+        lambda lines, titles: (None, None, None, None, 10.0, 11.0, None, 20.0, 21.0),
+    )
+    monkeypatch.setattr(ge, "get_gomc_energy_data", lambda cfg, lines, box_number: object())
+    monkeypatch.setattr(
+        ge,
+        "get_gomc_energy_data_kcal_per_mol",
+        lambda df: (None, None, None, None, 100.0, 101.0, None, None, None, None, 200.0, 201.0),
+    )
+
+    monkeypatch.setattr(ne, "compare_namd_gomc_energies", lambda *args, **kwargs: None)
+    monkeypatch.setattr(ge, "compare_namd_gomc_energies", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        ne.NamdEngine,
+        "get_run0_fft_filename",
+        lambda self, bn: (None, str(tmp_path / "NAMD" / "0000000000_a")),
+    )
+
+
+def test_integration_dry_run_default_mode_persists_only_out_dat_on_disk(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("PY_MCMD_MANAGED_OUTPUT_ROOT", str(tmp_path / "managed_runtime"))
+    _patch_managed_store_dry_run_dependencies(tmp_path, monkeypatch)
+
+    cfg = _cfg(tmp_path, developer_mode=False)
+    orch = mgr.SimulationOrchestrator(cfg, dry_run=True)
+    summary = orch.run()
+
+    assert summary["cycles_completed"] == 2
+
+    namd_disk_run0 = tmp_path / "NAMD" / "0000000000_a"
+    namd_disk_run2 = tmp_path / "NAMD" / "0000000002_a"
+    gomc_disk_run1 = tmp_path / "GOMC" / "0000000001"
+    gomc_disk_run3 = tmp_path / "GOMC" / "0000000003"
+
+    assert (namd_disk_run0 / "out.dat").exists()
+    assert (namd_disk_run2 / "out.dat").exists()
+    assert (gomc_disk_run1 / "out.dat").exists()
+    assert (gomc_disk_run3 / "out.dat").exists()
+
+    assert not (namd_disk_run0 / "in.conf").exists()
+    assert not (namd_disk_run2 / "in.conf").exists()
+    assert not (gomc_disk_run1 / "in.conf").exists()
+    assert not (gomc_disk_run3 / "in.conf").exists()
+
+    managed_root = tmp_path / "managed_runtime"
+    assert not (managed_root / "NAMD").exists()
+    assert not (managed_root / "GOMC").exists()
+
+
+def test_integration_dry_run_developer_mode_mirrors_managed_outputs_to_disk(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("PY_MCMD_MANAGED_OUTPUT_ROOT", str(tmp_path / "managed_runtime"))
+    _patch_managed_store_dry_run_dependencies(tmp_path, monkeypatch)
+
+    cfg = _cfg(tmp_path, developer_mode=True)
+    orch = mgr.SimulationOrchestrator(cfg, dry_run=True)
+    summary = orch.run()
+
+    assert summary["cycles_completed"] == 2
+
+    namd_disk_run0 = tmp_path / "NAMD" / "0000000000_a"
+    namd_disk_run2 = tmp_path / "NAMD" / "0000000002_a"
+    gomc_disk_run1 = tmp_path / "GOMC" / "0000000001"
+    gomc_disk_run3 = tmp_path / "GOMC" / "0000000003"
+
+    assert (namd_disk_run0 / "out.dat").exists()
+    assert (namd_disk_run0 / "in.conf").exists()
+    assert (namd_disk_run2 / "in.conf").exists()
+
+    assert (gomc_disk_run1 / "out.dat").exists()
+    assert (gomc_disk_run1 / "in.conf").exists()
+    assert (gomc_disk_run3 / "in.conf").exists()
+
+    managed_root = tmp_path / "managed_runtime"
+    assert not (managed_root / "NAMD").exists()
+    assert not (managed_root / "GOMC").exists()

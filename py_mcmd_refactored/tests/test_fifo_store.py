@@ -168,3 +168,164 @@ def test_managed_artifact_store_cleanup_all_removes_engine_cache(tmp_path: Path)
     store.cleanup_all()
 
     assert not cache_file.exists()
+
+# # Default mode does not mirror runtime artifacts to disk
+# def test_managed_artifact_store_default_mode_keeps_runtime_in_managed_only(tmp_path: Path):
+#     store = ManagedArtifactStore(
+#         disk_roots={"NAMD": tmp_path / "NAMD", "GOMC": tmp_path / "GOMC"},
+#         managed_root=tmp_path / "managed",
+#         developer_mode=False,
+#     )
+
+#     step = store.prepare_step("NAMD", "0000000000")
+#     box0_runtime = step.runtime_dir(0)
+#     box0_disk = step.disk_dir(0)
+
+#     (box0_runtime / "out.dat").write_text("stdout\n")
+#     (box0_runtime / "namdOut.restart.coor").write_text("coor\n")
+
+#     store.finalize_step_success("NAMD", "0000000000")
+
+#     assert (box0_runtime / "out.dat").exists()
+#     assert (box0_runtime / "namdOut.restart.coor").exists()
+#     assert not (box0_disk / "out.dat").exists()
+#     assert not (box0_disk / "namdOut.restart.coor").exists()
+
+# # Developer mode mirrors NAMD managed outputs to disk
+# def test_managed_artifact_store_developer_mode_mirrors_namd_outputs_to_disk(tmp_path: Path):
+#     store = ManagedArtifactStore(
+#         disk_roots={"NAMD": tmp_path / "NAMD", "GOMC": tmp_path / "GOMC"},
+#         managed_root=tmp_path / "managed",
+#         developer_mode=True,
+#     )
+
+#     step = store.prepare_step("NAMD", "0000000000")
+#     (step.runtime_dir(0) / "out.dat").write_text("stdout\n")
+#     (step.runtime_dir(0) / "namdOut.restart.coor").write_text("coor\n")
+#     (step.runtime_dir(1) / "out.dat").write_text("stdout1\n")
+
+#     store.finalize_step_success("NAMD", "0000000000")
+
+#     assert (step.disk_dir(0) / "out.dat").read_text() == "stdout\n"
+#     assert (step.disk_dir(0) / "namdOut.restart.coor").read_text() == "coor\n"
+#     assert (step.disk_dir(1) / "out.dat").read_text() == "stdout1\n"
+
+# # Failure cleanup removes managed runtime dirs and does not leave stale disk copies in default mode
+# def test_managed_artifact_store_failure_cleans_runtime_dirs(tmp_path: Path):
+#     store = ManagedArtifactStore(
+#         disk_roots={"NAMD": tmp_path / "NAMD", "GOMC": tmp_path / "GOMC"},
+#         managed_root=tmp_path / "managed",
+#         developer_mode=False,
+#     )
+
+#     step = store.prepare_step("GOMC", "0000000001")
+#     runtime_dir = step.runtime_dir()
+#     disk_dir = step.disk_dir()
+
+#     (runtime_dir / "out.dat").write_text("stdout\n")
+#     (runtime_dir / "Output_data_BOX_0_restart.coor").write_text("coor\n")
+
+#     store.finalize_step_failure("GOMC", "0000000001")
+
+#     assert not runtime_dir.exists()
+#     assert not disk_dir.exists()
+
+def test_managed_artifact_store_prepare_step_creates_expected_runtime_dirs(tmp_path: Path):
+    store = ManagedArtifactStore(
+        disk_roots={"NAMD": tmp_path / "NAMD", "GOMC": tmp_path / "GOMC"},
+        managed_root=tmp_path / "managed",
+    )
+
+    namd = store.prepare_step("NAMD", "0000000000")
+    gomc = store.prepare_step("GOMC", "0000000001")
+
+    assert namd.runtime_dir(0).is_dir()
+    assert namd.runtime_dir(1).is_dir()
+    assert gomc.runtime_dir().is_dir()
+    assert namd.disk_dir(0) == tmp_path / "NAMD" / "0000000000_a"
+    assert namd.disk_dir(1) == tmp_path / "NAMD" / "0000000000_b"
+    assert gomc.disk_dir() == tmp_path / "GOMC" / "0000000001"
+
+
+def test_managed_artifact_store_default_mode_does_not_mirror_runtime_outputs_to_disk(tmp_path: Path):
+    store = ManagedArtifactStore(
+        disk_roots={"NAMD": tmp_path / "NAMD", "GOMC": tmp_path / "GOMC"},
+        managed_root=tmp_path / "managed",
+        developer_mode=False,
+    )
+
+    step = store.prepare_step("NAMD", "0000000000")
+    runtime_box0 = step.runtime_dir(0)
+    runtime_box1 = step.runtime_dir(1)
+
+    (runtime_box0 / "out.dat").write_text("stdout box0\n", encoding="utf-8")
+    (runtime_box0 / "namdOut.restart.coor").write_text("coor box0\n", encoding="utf-8")
+    (runtime_box1 / "out.dat").write_text("stdout box1\n", encoding="utf-8")
+
+    store.finalize_step_success("NAMD", "0000000000")
+
+    assert (runtime_box0 / "out.dat").exists()
+    assert (runtime_box0 / "namdOut.restart.coor").exists()
+    assert (runtime_box1 / "out.dat").exists()
+
+    assert not (step.disk_dir(0) / "out.dat").exists()
+    assert not (step.disk_dir(0) / "namdOut.restart.coor").exists()
+    assert not (step.disk_dir(1) / "out.dat").exists()
+
+
+def test_managed_artifact_store_developer_mode_mirrors_namd_outputs_to_disk(tmp_path: Path):
+    store = ManagedArtifactStore(
+        disk_roots={"NAMD": tmp_path / "NAMD", "GOMC": tmp_path / "GOMC"},
+        managed_root=tmp_path / "managed",
+        developer_mode=True,
+    )
+
+    step = store.prepare_step("NAMD", "0000000002")
+    (step.runtime_dir(0) / "out.dat").write_text("stdout0\n", encoding="utf-8")
+    (step.runtime_dir(0) / "namdOut.restart.coor").write_text("coor0\n", encoding="utf-8")
+    (step.runtime_dir(1) / "out.dat").write_text("stdout1\n", encoding="utf-8")
+
+    store.finalize_step_success("NAMD", "0000000002")
+
+    assert (step.disk_dir(0) / "out.dat").read_text(encoding="utf-8") == "stdout0\n"
+    assert (step.disk_dir(0) / "namdOut.restart.coor").read_text(encoding="utf-8") == "coor0\n"
+    assert (step.disk_dir(1) / "out.dat").read_text(encoding="utf-8") == "stdout1\n"
+
+
+def test_managed_artifact_store_developer_mode_mirrors_gomc_outputs_to_disk(tmp_path: Path):
+    store = ManagedArtifactStore(
+        disk_roots={"NAMD": tmp_path / "NAMD", "GOMC": tmp_path / "GOMC"},
+        managed_root=tmp_path / "managed",
+        developer_mode=True,
+    )
+
+    step = store.prepare_step("GOMC", "0000000001")
+    (step.runtime_dir() / "out.dat").write_text("gomc stdout\n", encoding="utf-8")
+    (step.runtime_dir() / "Output_data_BOX_0_restart.coor").write_text("gomc coor\n", encoding="utf-8")
+
+    store.finalize_step_success("GOMC", "0000000001")
+
+    assert (step.disk_dir() / "out.dat").read_text(encoding="utf-8") == "gomc stdout\n"
+    assert (step.disk_dir() / "Output_data_BOX_0_restart.coor").read_text(encoding="utf-8") == "gomc coor\n"
+
+
+def test_managed_artifact_store_failure_cleans_runtime_dirs_without_disk_mirror_in_default_mode(tmp_path: Path):
+    store = ManagedArtifactStore(
+        disk_roots={"NAMD": tmp_path / "NAMD", "GOMC": tmp_path / "GOMC"},
+        managed_root=tmp_path / "managed",
+        developer_mode=False,
+    )
+
+    step = store.prepare_step("GOMC", "0000000003")
+    runtime_dir = step.runtime_dir()
+    disk_dir = step.disk_dir()
+
+    (runtime_dir / "out.dat").write_text("stdout\n", encoding="utf-8")
+    (runtime_dir / "Output_data_BOX_0_restart.coor").write_text("coor\n", encoding="utf-8")
+
+    store.finalize_step_failure("GOMC", "0000000003")
+
+    assert not runtime_dir.exists()
+    assert not disk_dir.exists()
+    with pytest.raises(KeyError):
+        store.get_step("GOMC", "0000000003")
