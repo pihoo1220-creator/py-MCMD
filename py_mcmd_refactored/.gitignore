@@ -1,7 +1,8 @@
 # Python bytecode & caches
-__pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
+
 
 # Test & coverage artifacts
 .pytest_cache/
@@ -25,3 +26,5 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+

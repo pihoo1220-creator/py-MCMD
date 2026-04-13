@@ -7,13 +7,23 @@ import sys
 import logging
 from pprint import pprint  # pretty-print the object
 
+from pathlib import Path
 
-sys.path.insert(0, "/home/arsalan/wsu-gomc/py-MCMD-hm/py_mcmd_refactored")
+HERE = Path(__file__).resolve()
+PROJECT_ROOT = HERE.parents[1]   # .../py_mcmd_refactored
+REPO_ROOT = HERE.parents[2]      # repo root
+
+for p in (str(REPO_ROOT), str(PROJECT_ROOT)):
+    if p not in sys.path:
+        sys.path.insert(0, p)
+        
+# PROJECT_ROOT = Path(__file__).resolve().parents[1]   # .../py_mcmd_refactored
+# if str(PROJECT_ROOT) not in sys.path:
+#     sys.path.insert(0, str(PROJECT_ROOT))
+
+# sys.path.insert(0, "/home/arsalan/wsu-gomc/py-MCMD-hm/py_mcmd_refactored")
 
 
-
-# from  config.models import load_simulation_config
-# from orchestrator.manager import SimulationOrchestrator
 from config.models import load_simulation_config
 from orchestrator.manager import SimulationOrchestrator
 
@@ -54,6 +64,11 @@ def parse_args(argv=None):
         "-v", "--verbose",
         action="store_true",
         help="Enable debug logging"
+    )
+    arg_parser.add_argument(
+        "--dry_run",
+        action="store_true",
+        help="Do not execute NAMD/GOMC binaries. Still generates inputs and runs orchestration logic.",
     )
     # return arg_parser.parse_args()
     args = arg_parser.parse_args(argv)
@@ -112,7 +127,7 @@ def main():
     cfg = cfg.model_copy(update={"namd_simulation_order": args.namd_simulation_order})
 
     # hand off to the orchestrator
-    sim = SimulationOrchestrator(cfg)
+    sim = SimulationOrchestrator(cfg, dry_run=args.dry_run)
     logging.info("Configuration loaded and orchestrator constructed successfully.")
 
     sim.run()  # or sim.execute_cycles()

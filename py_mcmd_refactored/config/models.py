@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import List, Dict, Optional, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict, StrictBool
 
 
 class SimulationConfig(BaseModel):
@@ -39,6 +39,14 @@ class SimulationConfig(BaseModel):
         description=(
             "NAMD execution order for two-box GEMC runs: 'series' or 'parallel'. "
             "Defaults to 'series'."
+        ),
+    )
+
+    developer_mode: StrictBool = Field(
+        default=False,
+        description=(
+            "Enable developer-mode dual-write behavior for FIFO-managed outputs. "
+            "Defaults to false when omitted."
         ),
     )
 
@@ -112,10 +120,6 @@ class SimulationConfig(BaseModel):
         # For ensembles that use a second box, require non-zero cores for box 1
         if self.simulation_type in ("GEMC", "GCMC"):
             if self.no_core_box_1 <= 0:
-                # raise ValueError(
-                #     f"Enter no_core_box_1 as a non-zero number (>=1) for {self.simulation_type}; "
-                #     f"received {self.no_core_box_1}."
-                # )
                 raise ValueError("no_core_box_1 must be > 0")
         return self
     

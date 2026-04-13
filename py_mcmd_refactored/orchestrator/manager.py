@@ -6,7 +6,7 @@ from pathlib import Path
 
 from utils.path import format_cycle_id
 from config.models import SimulationConfig
-from .state import RunState
+from .state import RunState, PmeDims
 
 # you’ll wire in your engines once they exist:
 # from engines.namd_engine import NAMDEngine
@@ -14,6 +14,26 @@ from .state import RunState
 from engines.base import Engine
 from engines.gomc_engine import GomcEngine
 from engines.namd_engine import NamdEngine
+from utils.fifo_store import FifoStore,FifoStepResources
+
+_FIFO_OUTPUT_BASENAMES_BY_ENGINE = {
+    # These are the outputs currently routed through the centralized runner.
+    # The same pattern can be extended to restart artifacts as they are moved
+    # from writer-owned filenames to store-owned endpoints.
+    "NAMD": ["box0.out.dat", "box1.out.dat"],
+    "GOMC": ["out.dat"],
+}
+
+import time
+import inspect
+
+
+try:
+    from orchestrator.restart import compute_start_context, apply_start_context
+except Exception:  # pragma: no cover
+    compute_start_context = None
+    apply_start_context = None
+
 class SimulationOrchestrator:
     # def __init__(self, cfg: SimulationConfig):
     #     self.cfg = cfg
@@ -28,11 +48,33 @@ class SimulationOrchestrator:
         self.cfg = cfg
         # Central mutable state for the legacy run_no loop
         self.state = RunState.from_config(cfg)
+        self._time_stats_lines = []
 
         # Propagated execution strategy for NAMD (used later when planning two-box GEMC runs)
         self.namd_simulation_order = getattr(cfg, "namd_simulation_order", "series")
 
         self.dry_run = dry_run
+
+        self.developer_mode = bool(getattr(cfg, "developer_mode", False))
+        # self.fifo_store = FifoStore(
+        #     root_dir=Path(self.cfg.log_dir) / ".fifo_store",
+        #     output_basenames_by_engine=_FIFO_OUTPUT_BASENAMES_BY_ENGINE,
+        #     developer_mode=self.developer_mode,
+        #     dual_write_path_factory=self._fifo_dual_write_path,
+        #     logger=self.logger,
+        # )
+        self.fifo_store = FifoStore(
+            disk_roots={
+                "NAMD": Path(self.cfg.path_namd_runs),
+                "GOMC": Path(self.cfg.path_gomc_runs),
+            },
+            developer_mode=self.developer_mode,
+            logger=self.logger,
+        )
+        self._last_successful_fifo_step_by_engine = {
+            "NAMD": None,
+            "GOMC": None,
+        }
 
         self.namd = NamdEngine(cfg, "NAMD", dry_run=dry_run)
         self.gomc = GomcEngine(cfg, "GOMC", dry_run=dry_run)
@@ -151,6 +193,15 @@ class SimulationOrchestrator:
             "\n*************************************************\n"
         )
 
+    def _emit_end_header(self) -> None:
+        end_time = datetime.today()
+        msg = (
+            "\n*************************************************\n"
+            f"date and time (end) = {end_time}\n"
+            "\n*************************************************\n"
+        )
+        self.logger.info(msg)
+        
     def _prepare_run_dirs(self) -> None:
         """Create NAMD/GOMC root folders; warn if they already exist (stale run risk)."""
         namd_root = self.cfg.path_namd_runs
@@ -176,43 +227,298 @@ class SimulationOrchestrator:
         # Optionally store for later usage (e.g., per-cycle dirs)
         self.namd_root = namd_root
         self.gomc_root = gomc_root
+
+    
+    # def run(self):
+    #     """Run coupled NAMD↔GOMC segments using the legacy-equivalent run_no parity loop."""
+    #     self.logger.info("Starting coupled NAMD↔GOMC simulation")
+
+    #     # --- Restart initialization (if starting at cycle > 0) ---
+    #     if int(self.cfg.starting_at_cycle_namd_gomc_sims) > 0:
+    #         if compute_start_context is not None and apply_start_context is not None:
+    #             ctx = compute_start_context(self.cfg, id_width=8)
+    #             apply_start_context(self.state, ctx)
+    #         else:
+    #             # Fallback if restart module is not present
+    #             self.state.current_step = (
+    #                 (int(self.cfg.namd_run_steps) + int(self.cfg.gomc_run_steps)) * int(self.cfg.starting_at_cycle_namd_gomc_sims)
+    #                 + int(self.cfg.namd_minimize_steps)
+    #             )
+
+    #         # If PME seeding helper exists, try it (won’t break tests if absent)
+    #         if hasattr(self, "refresh_pme_dims_from_run0"):
+    #             try:
+    #                 self.refresh_pme_dims_from_run0()
+    #             except Exception as e:
+    #                 self.logger.warning("[PME] refresh_pme_dims_from_run0 failed: %s", e)
+
+    #     starting_sims = int(self.cfg.starting_sims_namd_gomc)
+    #     total_sims = int(self.cfg.total_sims_namd_gomc)
+
+    #     cycles_completed = 0
+
+    #     cycle_start_perf = None
+    #     self._time_stats_lines = []
+
+    #     for run_no in range(starting_sims, total_sims):
+    #         self.logger.info(
+    #             "*************************************************\n"
+    #             "*************************************************\n"
+    #             "run_no = %s (START)\n"
+    #             "*************************************************",
+    #             run_no,
+    #         )
+
+    #         # TIME_STATS: cycle start at even run_no
+    #         if run_no % 2 == 0:
+    #             cycle_start_perf = time.perf_counter()
+
+    #         if run_no % 2 == 0:
+    #             self.namd.run_segment(run_no=run_no, state=self.state)
+    #         else:
+    #             self.gomc.run_segment(run_no=run_no, state=self.state)
+    #             cycles_completed += 1
+
+    #             # TIME_STATS: cycle end at odd run_no
+    #             cycle_end_perf = time.perf_counter()
+    #             if cycle_start_perf is None:
+    #                 cycle_start_perf = cycle_end_perf
+
+    #             cycle_run_time_s = round(cycle_end_perf - cycle_start_perf, 6)
+
+    #             max_namd = float(self.state.timings.max_namd_cycle_time_s or 0.0)
+    #             gomc_t = float(self.state.timings.gomc_cycle_time_s or 0.0)
+    #             python_only_time_s = round(cycle_run_time_s - (max_namd + gomc_t), 6)
+
+    #             # Header once (first completed cycle)
+    #             if run_no == starting_sims + 1:
+    #                 header = (
+    #                     "*************************************************\n"
+    #                     "TIME_STATS_TITLE:\t#Cycle_No\t\tNAMD_time_s\t\t"
+    #                     "GOMC_time_s\t\tPython_time_s\t\tTotal_time_s\n"
+    #                 )
+    #                 self._time_stats_lines.append(header)
+    #                 self.logger.info(header.rstrip("\n"))
+
+    #             cycle_no = int(run_no / 2)
+    #             data = (
+    #                 f"TIME_STATS_DATA:\t{cycle_no}\t\t{max_namd}\t\t{gomc_t}\t\t"
+    #                 f"{python_only_time_s}\t\t{cycle_run_time_s}\n"
+    #             )
+    #             self._time_stats_lines.append(data)
+    #             self.logger.info(data.rstrip("\n"))
+
+    #         self.logger.info(
+    #             "*************************************************\n"
+    #             "run_no = %s (End)\n"
+    #             "*************************************************",
+    #             run_no,
+    #         )
+
+    #     self.logger.info("All cycles completed.")
+
+    #     summary = {
+    #         "total_cycles": self.total_cycles,
+    #         "start_cycle": self.start_cycle,
+    #         "namd_steps": self.namd_steps,
+    #         "gomc_steps": self.gomc_steps,
+    #         "cycles_completed": cycles_completed,
+    #         "total_sims_namd_gomc": self.total_sims_namd_gomc,
+    #         "starting_sims_namd_gomc": self.starting_sims_namd_gomc,
+    #         "state": self.state.snapshot(),
+    #         "time_stats_lines": self._time_stats_lines,
+    #     }
+    #     self._emit_end_header()
+    #     return summary
+
     def run(self):
-        """High-level entrypoint for running all cycles."""
         self.logger.info("Starting coupled NAMD↔GOMC simulation")
-        start = self.cfg.starting_at_cycle_namd_gomc_sims
-        end   = self.cfg.total_cycles_namd_gomc_sims
 
-        for cycle in range(start, end):
-            self.logger.debug(f"Cycle {cycle+1}/{end}")
-            cid = format_cycle_id(cycle, 8)  # or 10 if you prefer 10-digit folders
-            namd_cycle_dir = Path(self.namd_root) / f"{cid}_a"
-            gomc_cycle_dir = Path(self.gomc_root) / cid
+        if int(self.cfg.starting_at_cycle_namd_gomc_sims) > 0:
+            if compute_start_context is not None and apply_start_context is not None:
+                ctx = compute_start_context(self.cfg, id_width=10)
+                apply_start_context(self.state, ctx)
+            else:
+                self.state.current_step = (
+                    (int(self.cfg.namd_run_steps) + int(self.cfg.gomc_run_steps))
+                    * int(self.cfg.starting_at_cycle_namd_gomc_sims)
+                    + int(self.cfg.namd_minimize_steps)
+                )
 
-            self.logger.info(f"Preparing directories for cycle {cycle}: {cid}, {namd_cycle_dir} and {gomc_cycle_dir}")
-            namd_cycle_dir.mkdir(parents=True, exist_ok=True)
-            gomc_cycle_dir.mkdir(parents=True, exist_ok=True)
-            # --- NAMDEngine step ---
-            # self.namd.prepare(cycle)
-            # self.namd.run_cycle(cycle)
-            # result_namd = self.namd.collect_results(cycle)
+            if hasattr(self, "refresh_pme_dims_from_run0"):
+                try:
+                    self.refresh_pme_dims_from_run0()
+                except Exception as e:
+                    self.logger.warning("[PME] refresh_pme_dims_from_run0 failed: %s", e)
 
-            # --- GOMCEngine step ---
-            # self.gomc.prepare(cycle)
-            # self.gomc.run_cycle(cycle)
-            # result_gomc = self.gomc.collect_results(cycle)
+        starting_sims = int(self.cfg.starting_sims_namd_gomc)
+        total_sims = int(self.cfg.total_sims_namd_gomc)
 
-            # optionally combine or log the per-cycle stats
-            # self.logger.info(f"Cycle {cycle} complete")
+        cycles_completed = 0
+        cycle_start_perf = None
+        self._time_stats_lines = []
 
-        self.logger.info("All cycles completed.")
-        summary = {
-            "total_cycles": self.total_cycles,
-            "start_cycle": self.start_cycle,
-            "namd_steps": self.namd_steps,
-            "gomc_steps": self.gomc_steps,
-            "cycles_completed": 0,
-            "total_sims_namd_gomc": self.total_sims_namd_gomc,
-            "starting_sims_namd_gomc": self.starting_sims_namd_gomc,
-            "state": self.state.snapshot(),
+        summary = None
+
+        try:
+            for run_no in range(starting_sims, total_sims):
+                self.logger.info(
+                    "*************************************************\n"
+                    "*************************************************\n"
+                    "run_no = %s (START)\n"
+                    "*************************************************",
+                    run_no,
+                )
+
+                if run_no % 2 == 0:
+                    cycle_start_perf = time.perf_counter()
+                    engine_name = "NAMD"
+                else:
+                    engine_name = "GOMC"
+
+                fifo_resources = self._prepare_fifo_step(engine_name, run_no)
+
+                try:
+                    # if run_no % 2 == 0:
+                    #     self.namd.run_segment(
+                    #         run_no=run_no,
+                    #         state=self.state,
+                    #         fifo_resources=fifo_resources,
+                    #     )
+                    # else:
+                    #     self.gomc.run_segment(
+                    #         run_no=run_no,
+                    #         state=self.state,
+                    #         fifo_resources=fifo_resources,
+                    #     )
+                    #     cycles_completed += 1
+                    if run_no % 2 == 0:
+                        self._call_run_segment(
+                            self.namd,
+                            run_no=run_no,
+                            fifo_resources=fifo_resources,
+                        )
+                    else:
+                        self._call_run_segment(
+                            self.gomc,
+                            run_no=run_no,
+                            fifo_resources=fifo_resources,
+                        )
+                        cycles_completed += 1
+
+                    self._mark_fifo_step_success(engine_name, run_no)
+
+                except Exception:
+                    self._mark_fifo_step_failure(engine_name, run_no)
+                    raise
+
+                if run_no % 2 == 1:
+                    cycle_end_perf = time.perf_counter()
+                    if cycle_start_perf is None:
+                        cycle_start_perf = cycle_end_perf
+
+                    cycle_run_time_s = round(cycle_end_perf - cycle_start_perf, 6)
+
+                    max_namd = float(self.state.timings.max_namd_cycle_time_s or 0.0)
+                    gomc_t = float(self.state.timings.gomc_cycle_time_s or 0.0)
+                    python_only_time_s = round(cycle_run_time_s - (max_namd + gomc_t), 6)
+
+                    if run_no == starting_sims + 1:
+                        header = (
+                            "*************************************************\n"
+                            "TIME_STATS_TITLE:\t#Cycle_No\t\tNAMD_time_s\t\t"
+                            "GOMC_time_s\t\tPython_time_s\t\tTotal_time_s\n"
+                        )
+                        self._time_stats_lines.append(header)
+                        self.logger.info(header.rstrip("\n"))
+
+                    cycle_no = int(run_no / 2)
+                    data = (
+                        f"TIME_STATS_DATA:\t{cycle_no}\t\t{max_namd}\t\t{gomc_t}\t\t"
+                        f"{python_only_time_s}\t\t{cycle_run_time_s}\n"
+                    )
+                    self._time_stats_lines.append(data)
+                    self.logger.info(data.rstrip("\n"))
+
+                self.logger.info(
+                    "*************************************************\n"
+                    "run_no = %s (End)\n"
+                    "*************************************************",
+                    run_no,
+                )
+
+            self.logger.info("All cycles completed.")
+
+            summary = {
+                "total_cycles": self.total_cycles,
+                "start_cycle": self.start_cycle,
+                "namd_steps": self.namd_steps,
+                "gomc_steps": self.gomc_steps,
+                "cycles_completed": cycles_completed,
+                "total_sims_namd_gomc": self.total_sims_namd_gomc,
+                "starting_sims_namd_gomc": self.starting_sims_namd_gomc,
+                "state": self.state.snapshot(),
+                "time_stats_lines": self._time_stats_lines,
+            }
+            self._emit_end_header()
+            return summary
+
+        finally:
+            # Graceful teardown on success, failure, or early exit.
+            self.fifo_store.cleanup_all()
+
+    def refresh_pme_dims_from_run0(self) -> None:
+        """Load NAMD Run-0 PME grid dims into orchestrator state.
+
+        Safe to call at any time. If Run-0 `out.dat` is missing or does not contain
+        PME grid dimensions, this leaves existing state unchanged.
+        """
+        nx0, ny0, nz0, _ = self.namd.get_run0_pme_dims(0)
+        if nx0 is not None and ny0 is not None and nz0 is not None:
+            self.state.pme_box0 = PmeDims(x=nx0, y=ny0, z=nz0)
+            self.logger.info("[PME] Loaded Run-0 PME dims for box0: %s %s %s", nx0, ny0, nz0)
+        else:
+            self.logger.info("[PME] Run-0 PME dims not available for box0")
+
+        if self.cfg.simulation_type == "GEMC" and (self.cfg.only_use_box_0_for_namd_for_gemc is False):
+            nx1, ny1, nz1, _ = self.namd.get_run0_pme_dims(1)
+            if nx1 is not None and ny1 is not None and nz1 is not None:
+                self.state.pme_box1 = PmeDims(x=nx1, y=ny1, z=nz1)
+                self.logger.info("[PME] Loaded Run-0 PME dims for box1: %s %s %s", nx1, ny1, nz1)
+            else:
+                self.logger.info("[PME] Run-0 PME dims not available for box1")
+            
+    # FIFO Helpers
+    def _fifo_step_id(self, run_no: int) -> str:
+        return format_cycle_id(int(run_no), 10)
+
+    def _fifo_dual_write_path(self, engine: str, step_id: str, basename: str) -> Path:
+        return Path(self.cfg.log_dir) / "fifo_dual_write" / engine / step_id / basename
+
+    def _prepare_fifo_step(self, engine: str, run_no: int) -> FifoStepResources:
+        return self.fifo_store.prepare_step(engine, self._fifo_step_id(run_no))
+
+    def _mark_fifo_step_success(self, engine: str, run_no: int) -> None:
+        step_id = self._fifo_step_id(run_no)
+        previous_step_id = self._last_successful_fifo_step_by_engine.get(engine)
+
+        self.fifo_store.finalize_step_success(engine, step_id)
+
+        # Retention policy: keep only the most recent successful step per engine.
+        if previous_step_id is not None and previous_step_id != step_id:
+            self.fifo_store.cleanup_step(engine, previous_step_id)
+
+        self._last_successful_fifo_step_by_engine[engine] = step_id
+
+    def _mark_fifo_step_failure(self, engine: str, run_no: int) -> None:
+        self.fifo_store.finalize_step_failure(engine, self._fifo_step_id(run_no))
+
+    def _call_run_segment(self, engine, *, run_no: int, fifo_resources):
+        sig = inspect.signature(engine.run_segment)
+        kwargs = {
+            "run_no": run_no,
+            "state": self.state,
         }
-        return summary
+        if "fifo_resources" in sig.parameters:
+            kwargs["fifo_resources"] = fifo_resources
+        return engine.run_segment(**kwargs)
